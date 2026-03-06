@@ -31,7 +31,12 @@ jobs:
             git notes --ref=claude-sessions show "$SHA" > "$RAW_NOTE" 2>/dev/null || { rm -f "$RAW_NOTE"; continue; }
 
             # Deduplicate by session_id — skip if we already have this session from a newer commit
+            # Notes without session_id are legacy (pre-dedup) and always skipped if we already have sessions
             SID=$(jq -r '.session_id // ""' "$RAW_NOTE")
+            if [ -z "$SID" ] && [ "$FOUND" = true ]; then
+              rm -f "$RAW_NOTE"
+              continue
+            fi
             if [ -n "$SID" ] && echo "$SEEN_SESSIONS" | grep -qF "$SID"; then
               rm -f "$RAW_NOTE"
               continue
