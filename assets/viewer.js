@@ -1,4 +1,5 @@
-/* Claude Code Session Viewer — client-side renderer + interactivity */
+/* Claude Code Session Viewer — client-side renderer + interactivity
+ * Supports: text, markdown, tool use, thinking blocks, and inline base64 images */
 
 (function () {
   "use strict";
