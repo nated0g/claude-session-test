@@ -25,81 +25,55 @@ jobs:
           mkdir -p sessions
           FOUND=false
           for SHA in $(git log --format='%H' origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}); do
-            NOTE=$(git notes --ref=claude-sessions show "$SHA" 2>/dev/null) || continue
-            echo "$NOTE" > "sessions/${SHA}.jsonl"
+            NOTE_FILE="sessions/${SHA}.jsonl"
+            git notes --ref=claude-sessions show "$SHA" > "$NOTE_FILE" 2>/dev/null || { rm -f "$NOTE_FILE"; continue; }
             FOUND=true
           done
           echo "found=$FOUND" >> "$GITHUB_OUTPUT"
-
-      - name: Generate HTML pages
-        if: steps.extract.outputs.found == 'true'
-        run: |
-          PR_NUM=${{ github.event.pull_request.number }}
-          mkdir -p "deploy/pr/${PR_NUM}"
-          for f in sessions/*.jsonl; do
-            SHA=$(basename "$f" .jsonl)
-            SHORT=${SHA:0:8}
-            cat > "deploy/pr/${PR_NUM}/${SHA}.html" << HTMLEOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Claude Session — ${SHORT}</title>
-            <style>
-              body { font-family: monospace; background: #1e1e2e; color: #cdd6f4; max-width: 900px; margin: 0 auto; padding: 20px; }
-              h1 { color: #89b4fa; font-size: 1.2em; }
-              .meta { color: #6c7086; font-size: 0.85em; margin-bottom: 20px; }
-              pre { background: #313244; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
-              .msg { margin: 12px 0; padding: 10px; border-radius: 6px; }
-              .user { background: #313244; border-left: 3px solid #89b4fa; }
-              .assistant { background: #1e1e2e; border-left: 3px solid #a6e3a1; }
-              .tool { background: #181825; border-left: 3px solid #fab387; }
-              .role { font-weight: bold; margin-bottom: 4px; }
-              .role.user-role { color: #89b4fa; }
-              .role.assistant-role { color: #a6e3a1; }
-              .role.tool-role { color: #fab387; }
-            </style>
-          </head>
-          <body>
-            <h1>Claude Code Session</h1>
-            <div class="meta">Commit: ${SHA}</div>
-            <div id="session"></div>
-            <script>
-              const raw = $(cat "$f" | python3 -c "import sys,json; lines=[json.loads(l) for l in sys.stdin]; print(json.dumps(json.dumps(lines)))");
-              const messages = JSON.parse(raw);
-              const container = document.getElementById('session');
-              for (const msg of messages) {
-                const div = document.createElement('div');
-                const type = msg.type || 'unknown';
-                let cls = 'msg';
-                let role = type;
-                if (type === 'user') { cls += ' user'; role = 'User'; }
-                else if (type === 'assistant') { cls += ' assistant'; role = 'Assistant'; }
-                else if (type.includes('tool')) { cls += ' tool'; role = type === 'tool_use' ? 'Tool: ' + (msg.tool || '') : 'Tool Result'; }
-                else { cls += ' tool'; }
-                div.className = cls;
-                const roleClass = type === 'user' ? 'user-role' : type === 'assistant' ? 'assistant-role' : 'tool-role';
-                let content = msg.message || msg.output || '';
-                if (msg.input) content = JSON.stringify(msg.input, null, 2);
-                div.innerHTML = '<div class="role ' + roleClass + '">' + role + '</div><pre>' + (content || '').replace(/</g,'&lt;') + '</pre>';
-                container.appendChild(div);
-              }
-            </script>
-          </body>
-          </html>
-          HTMLEOF
-          done
 
       - name: Deploy to gh-pages
         if: steps.extract.outputs.found == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin gh-pages
-          git checkout gh-pages
+
           PR_NUM=${{ github.event.pull_request.number }}
-          cp -r deploy/pr/ pr/ 2>/dev/null || true
-          git add pr/
-          git commit -m "Add session pages for PR #${PR_NUM}" || echo "No changes to commit"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          AUTHOR="${{ github.event.pull_request.user.login || 'unknown' }}"
+
+          # Stash sessions and viewer files outside the working tree
+          cp -r sessions /tmp/sessions
+          cp index.html /tmp/index.html
+          cp -r assets /tmp/assets
+
+          # Build index.json manifest
+          MANIFEST="["
+          FIRST=true
+          for f in sessions/*.jsonl; do
+            SESSION_SHA=$(basename "$f" .jsonl)
+            TIMESTAMP=$(git log -1 --format='%aI' "$SESSION_SHA" 2>/dev/null || echo "")
+            if [ "$FIRST" = true ]; then FIRST=false; else MANIFEST+=","; fi
+            MANIFEST+="{\"sha\":\"${SESSION_SHA}\",\"author\":\"${AUTHOR}\",\"timestamp\":\"${TIMESTAMP}\"}"
+          done
+          MANIFEST+="]"
+
+          git fetch origin gh-pages || git checkout --orphan gh-pages
+          git checkout gh-pages || git checkout --orphan gh-pages
+
+          # Copy viewer app files
+          cp /tmp/index.html index.html
+          rm -rf assets
+          cp -r /tmp/assets assets
+
+          # Copy JSONL data files
+          mkdir -p "data/pr/${PR_NUM}"
+          cp /tmp/sessions/*.jsonl "data/pr/${PR_NUM}/"
+
+          # Write manifest
+          echo "$MANIFEST" > "data/pr/${PR_NUM}/index.json"
+
+          git add index.html assets/ data/
+          git commit -m "Update session pages for PR #${PR_NUM}" || echo "No changes to commit"
           git push origin gh-pages
 
       - name: Comment on PR
@@ -110,20 +84,20 @@ jobs:
             const fs = require('fs');
             const prNum = context.issue.number;
 
-            // Get GitHub Pages URL
             const { data: pages } = await github.rest.repos.getPages({
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
             const baseUrl = pages.html_url.replace(/\/$/, '');
+            const repoUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
 
-            const files = fs.readdirSync('sessions');
+            const files = fs.readdirSync('sessions').filter(f => f.endsWith('.jsonl'));
             let body = `### Claude Code Sessions\n\n`;
             body += `Found ${files.length} session(s) attached to commits in this PR.\n\n`;
             for (const f of files) {
               const sha = f.replace('.jsonl', '');
               const short = sha.slice(0, 8);
-              body += `- [\`${short}\` — View Session](${baseUrl}/pr/${prNum}/${sha}.html)\n`;
+              body += `- [\`${short}\` — View Session](${baseUrl}/?pr=${prNum}&sha=${sha}&repo=${encodeURIComponent(repoUrl)})\n`;
             }
 
             const { data: comments } = await github.rest.issues.listComments({
