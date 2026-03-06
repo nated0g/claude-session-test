@@ -226,7 +226,7 @@
 
   // ── Render tool use ─────────────────────────────────────────────────────────
 
-  function renderToolUse(block, result, commitSha) {
+  function renderToolUse(block, result, commitSha, subagents, author) {
     var name = block.name || "Unknown";
     var inp = block.input || {};
     var icon = toolIcon(name);
@@ -298,6 +298,19 @@
       }
       case "Task": {
         summaryLabel = esc(inp.description || "Subagent task");
+        // Try to find and inline the subagent session
+        if (result && subagents) {
+          var resultText = extractResultContent(result);
+          var agentMatch = resultText.match(/agentId:\s*([a-z0-9]+)/);
+          if (agentMatch) {
+            var agentKey = "agent-" + agentMatch[1];
+            var sa = subagents[agentKey];
+            if (sa) {
+              var inner = processSession(sa.lines, commitSha, author);
+              detail = '<div class="subagent-inline">' + inner.html + '</div>';
+            }
+          }
+        }
         break;
       }
       case "AskUserQuestion": {
@@ -376,7 +389,7 @@
 
   // ── Render a single message ─────────────────────────────────────────────────
 
-  function renderMessage(msg, toolResultMap, commitSha, author) {
+  function renderMessage(msg, toolResultMap, commitSha, author, subagents) {
     if (
       msg.type === "file-history-snapshot" ||
       msg.type === "progress" ||
@@ -405,7 +418,7 @@
           parts.push('<div class="msg-text">' + renderMarkdown(c.text.trim()) + "</div>");
         } else if (c.type === "tool_use") {
           var result = c.id ? toolResultMap[c.id] || null : null;
-          parts.push(renderToolUse(c, result, commitSha));
+          parts.push(renderToolUse(c, result, commitSha, subagents, author));
         }
       }
 
@@ -454,7 +467,7 @@
 
   // ── Process session (group messages) ────────────────────────────────────────
 
-  function processSession(messages, commitSha, author, label) {
+  function processSession(messages, commitSha, author, label, subagents) {
     var toolResultMap = buildToolResultMap(messages);
     var output = [];
     var userNav = [];
@@ -468,7 +481,7 @@
     for (var mi = 0; mi < messages.length; mi++) {
       var msg = messages[mi];
       var r;
-      r = renderMessage(msg, toolResultMap, commitSha, author);
+      r = renderMessage(msg, toolResultMap, commitSha, author, subagents);
       if (r) {
         var text = "";
         if (r.role === "user") {
@@ -588,6 +601,62 @@
     return messages;
   }
 
+  // ── Session stats ───────────────────────────────────────────────────────────
+
+  function computeStats(messages) {
+    var stats = {
+      model: "", apiCalls: 0,
+      inputTokens: 0, cacheCreation: 0, cacheRead: 0, outputTokens: 0,
+      peakContext: 0, contextWindow: 200000
+    };
+
+    for (var i = 0; i < messages.length; i++) {
+      var msg = messages[i];
+      if (msg.type === "assistant" && msg.message) {
+        var m = msg.message;
+        if (m.model && !stats.model) stats.model = m.model;
+        if (m.usage) {
+          stats.apiCalls++;
+          var u = m.usage;
+          stats.inputTokens += u.input_tokens || 0;
+          stats.cacheCreation += u.cache_creation_input_tokens || 0;
+          stats.cacheRead += u.cache_read_input_tokens || 0;
+          stats.outputTokens += u.output_tokens || 0;
+          var turnInput = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+          if (turnInput > stats.peakContext) stats.peakContext = turnInput;
+        }
+      }
+    }
+
+    return stats;
+  }
+
+  function fmtTokens(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+    if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+    return String(n);
+  }
+
+  function renderStats(stats, duration) {
+    var contextPct = stats.peakContext > 0 ? Math.round((stats.peakContext / stats.contextWindow) * 100) : 0;
+    var contextClass = contextPct >= 80 ? " stat-warn" : "";
+
+    var html = '<details class="session-stats-wrap"><summary class="session-stats-summary">Session Stats &mdash; ' + esc(stats.model) + ', ' + stats.apiCalls + ' calls, ' + contextPct + '% context</summary>';
+    html += '<div class="session-stats">';
+    html += '<div class="stat"><span class="stat-label">Model</span><span class="stat-value">' + esc(stats.model) + '</span></div>';
+    html += '<div class="stat"><span class="stat-label">API Calls</span><span class="stat-value">' + stats.apiCalls + '</span></div>';
+    html += '<div class="stat"><span class="stat-label">Output</span><span class="stat-value">' + fmtTokens(stats.outputTokens) + ' tokens</span></div>';
+    html += '<div class="stat"><span class="stat-label">Input (total)</span><span class="stat-value">' + fmtTokens(stats.inputTokens + stats.cacheCreation + stats.cacheRead) + ' tokens</span></div>';
+    html += '<div class="stat' + contextClass + '"><span class="stat-label">Peak Context</span><span class="stat-value"><span class="context-bar-wrap"><span class="context-bar" style="width:' + Math.min(contextPct, 100) + '%"></span></span>' + contextPct + '%</span></div>';
+
+    if (duration) {
+      html += '<div class="stat"><span class="stat-label">Duration</span><span class="stat-value">' + duration + '</span></div>';
+    }
+
+    html += '</div></details>';
+    return html;
+  }
+
   // ── Render a full session into the DOM ──────────────────────────────────────
 
   function renderSession(jsonlText, commitSha, commitAuthor) {
@@ -637,20 +706,22 @@
     titleEl.textContent = "Claude Code Session";
     document.title = "Claude Code Session \u2014 " + shortSha;
 
-    // Process main session
-    var result = processSession(main, commitSha, author);
+    // Compute session stats
+    var stats = computeStats(main);
+    var duration = "";
+    if (firstTs && lastTs) {
+      var ms = new Date(lastTs) - new Date(firstTs);
+      var mins = Math.floor(ms / 60000);
+      var hrs = Math.floor(mins / 60);
+      mins = mins % 60;
+      duration = hrs > 0 ? hrs + "h " + mins + "m" : mins + "m";
+    }
+    var statsHtml = renderStats(stats, duration);
+
+    // Process main session (pass subagents so Task tool_use can render them inline)
+    var result = processSession(main, commitSha, author, null, subagents);
     var mainHtml = result.html;
     var userNav = result.userNav;
-
-    // Process subagents
-    var subagentHtml = "";
-    var agentIds = Object.keys(subagents);
-    for (var ai = 0; ai < agentIds.length; ai++) {
-      var agentId = agentIds[ai];
-      var sa = subagents[agentId];
-      var inner = processSession(sa.lines, commitSha, author, "Subagent: " + agentId);
-      subagentHtml += '<details class="subagent-block"><summary class="subagent-summary"><span class="tool-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg></span>Subagent: ' + esc(sa.desc) + '</summary><div class="subagent-content">' + inner.html + "</div></details>";
-    }
 
     // Build sidebar nav
     if (userNav.length > 1) {
@@ -664,7 +735,7 @@
     }
 
     // Insert content
-    mainEl.innerHTML = mainHtml + subagentHtml;
+    mainEl.innerHTML = statsHtml + mainHtml;
     mainEl.style.display = "";
 
     // Run post-render setup
