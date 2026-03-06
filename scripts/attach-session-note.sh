@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code PostToolUse hook: attaches the current session as a git note after git commit.
-# Receives JSON on stdin with session_id, tool_input, etc.
+# Receives JSON on stdin with session_id, tool_input, cwd, etc.
 
 set -euo pipefail
 
@@ -10,12 +10,16 @@ INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_name',''))" 2>/dev/null)
 [ "$TOOL_NAME" = "Bash" ] || exit 0
 
-# Check if the command was a git commit
-TOOL_INPUT=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('command',''))" 2>/dev/null)
-echo "$TOOL_INPUT" | grep -q "git commit" || exit 0
+# Check if the command contained a git commit
+COMMAND=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('command',''))" 2>/dev/null)
+echo "$COMMAND" | grep -q "git commit" || exit 0
 
-# Don't attach notes for amend or other non-standard commits
-echo "$TOOL_INPUT" | grep -q "\-\-amend" && exit 0
+# Don't attach notes for amend
+echo "$COMMAND" | grep -q "\-\-amend" && exit 0
+
+# Check if the tool reported an error (commit might have failed)
+TOOL_ERROR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_error', False))" 2>/dev/null)
+[ "$TOOL_ERROR" = "True" ] && exit 0
 
 # Get session info
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
@@ -24,14 +28,32 @@ CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.re
 [ -n "$SESSION_ID" ] || exit 0
 [ -n "$CWD" ] || exit 0
 
-# Derive project dir name (same logic Claude Code uses)
-PROJECT_DIR=$(echo "$CWD" | sed 's|/|-|g')
-SESSION_FILE="$HOME/.claude/projects/${PROJECT_DIR}/${SESSION_ID}.jsonl"
+# Find session file by ID across all project dirs
+SESSION_FILE=""
+for dir in "$HOME"/.claude/projects/*/; do
+    candidate="${dir}${SESSION_ID}.jsonl"
+    if [ -f "$candidate" ]; then
+        SESSION_FILE="$candidate"
+        break
+    fi
+done
 
-[ -f "$SESSION_FILE" ] || exit 0
+[ -n "$SESSION_FILE" ] || exit 0
+
+# Figure out the git working directory.
+# If the command starts with "cd /some/path &&", extract that path.
+# Otherwise fall back to the hook's CWD.
+GIT_DIR="$CWD"
+CD_PATH=$(echo "$COMMAND" | python3 -c "
+import sys, re
+cmd = sys.stdin.read()
+m = re.match(r'cd\s+(\S+)\s*&&', cmd)
+print(m.group(1) if m else '')
+" 2>/dev/null)
+[ -n "$CD_PATH" ] && GIT_DIR="$CD_PATH"
 
 # Check if we're in a git repo
-cd "$CWD"
+cd "$GIT_DIR"
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
