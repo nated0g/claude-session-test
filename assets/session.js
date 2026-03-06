@@ -6,12 +6,27 @@
   // ── Syntax highlighting ─────────────────────────────────────────────────
   if (typeof hljs !== "undefined") {
     hljs.highlightAll();
+
+    // Highlight diff table cells that have a data-lang attribute
+    document.querySelectorAll(".diff-table[data-lang]").forEach(function (table) {
+      var lang = table.getAttribute("data-lang");
+      table.querySelectorAll("tr:not(.diff-hunk) td:last-child").forEach(function (td) {
+        var text = td.textContent || "";
+        if (!text.trim()) return;
+        try {
+          var result = hljs.highlight(text, { language: lang, ignoreIllegals: true });
+          td.innerHTML = result.value;
+        } catch (e) {
+          // Language not available, skip
+        }
+      });
+    });
   }
 
   // ── Expand / Collapse All ───────────────────────────────────────────────
-  const expandBtn = document.getElementById("expand-all");
+  var expandBtn = document.getElementById("expand-all");
   if (expandBtn) {
-    let expanded = false;
+    var expanded = false;
     expandBtn.addEventListener("click", function () {
       expanded = !expanded;
       document.querySelectorAll("details").forEach(function (d) {
@@ -23,9 +38,7 @@
 
   // ── Copy buttons on code blocks ─────────────────────────────────────────
   document.querySelectorAll("pre").forEach(function (pre) {
-    // Skip tiny blocks
     if (pre.textContent.length < 20) return;
-    // Skip diff tables (they're in a table, not direct pre content)
     if (pre.querySelector("table")) return;
 
     pre.style.position = "relative";
@@ -47,23 +60,70 @@
     pre.appendChild(btn);
   });
 
+  // ── Sidebar nav — highlight active user message on scroll ──────────────
+  var sidebar = document.getElementById("sidebar");
+  if (sidebar) {
+    var sidebarLinks = Array.from(sidebar.querySelectorAll(".sidebar-item"));
+    var userGroups = sidebarLinks.map(function (link) {
+      return document.getElementById(link.getAttribute("data-target"));
+    }).filter(Boolean);
+
+    // Use IntersectionObserver to track which user group is visible
+    var currentActive = null;
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            var id = entry.target.id;
+            if (currentActive) currentActive.classList.remove("active");
+            var link = sidebar.querySelector('[data-target="' + id + '"]');
+            if (link) {
+              link.classList.add("active");
+              currentActive = link;
+              // Scroll sidebar to keep active item visible
+              link.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            }
+          }
+        });
+      },
+      {
+        rootMargin: "-80px 0px -60% 0px",
+        threshold: 0
+      }
+    );
+
+    userGroups.forEach(function (group) {
+      observer.observe(group);
+    });
+
+    // Smooth scroll on sidebar click
+    sidebarLinks.forEach(function (link) {
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        var target = document.getElementById(link.getAttribute("data-target"));
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
+  }
+
   // ── Keyboard navigation ─────────────────────────────────────────────────
-  var messages = Array.from(document.querySelectorAll(".msg"));
+  var groups = Array.from(document.querySelectorAll(".msg-group"));
   var currentIdx = -1;
 
   document.addEventListener("keydown", function (e) {
-    // Don't intercept if typing in an input
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
 
     if (e.key === "j" || e.key === "k") {
       e.preventDefault();
       if (e.key === "j") {
-        currentIdx = Math.min(currentIdx + 1, messages.length - 1);
+        currentIdx = Math.min(currentIdx + 1, groups.length - 1);
       } else {
         currentIdx = Math.max(currentIdx - 1, 0);
       }
-      if (messages[currentIdx]) {
-        messages[currentIdx].scrollIntoView({ behavior: "smooth", block: "start" });
+      if (groups[currentIdx]) {
+        groups[currentIdx].scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }
   });
