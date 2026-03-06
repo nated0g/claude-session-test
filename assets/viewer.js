@@ -1,4 +1,6 @@
-/* Claude Code Session Viewer — client-side renderer + interactivity */
+/* Claude Code Session Viewer — client-side renderer + interactivity
+ * Supports: text, markdown, tool use, thinking blocks, and inline base64 images
+ * Images render as clickable thumbnails with lightbox overlay */
 
 (function () {
   "use strict";
@@ -196,6 +198,16 @@
     return SVGS[icon] || SVGS.tool;
   }
 
+  // ── Render an image content block ───────────────────────────────────────────
+
+  function renderImage(block) {
+    var src = block.source;
+    if (!src || !src.data) return "";
+    var mediaType = src.media_type || "image/png";
+    var dataUrl = 'data:' + mediaType + ';base64,' + src.data;
+    return '<div class="image-block"><img src="' + dataUrl + '" alt="Session image" loading="lazy" onclick="openLightbox(this.src)"></div>';
+  }
+
   // ── Extract tool result content ─────────────────────────────────────────────
 
   function extractResultContent(block) {
@@ -208,6 +220,19 @@
         .join("\n");
     }
     return "";
+  }
+
+  function extractResultImages(block) {
+    var content = block.content;
+    if (!Array.isArray(content)) return "";
+    var parts = [];
+    for (var i = 0; i < content.length; i++) {
+      var c = content[i];
+      if (typeof c === "object" && c.type === "image") {
+        parts.push(renderImage(c));
+      }
+    }
+    return parts.join("\n");
   }
 
   // ── Build tool result map ───────────────────────────────────────────────────
@@ -379,6 +404,10 @@
 
         resultHtml = '<div class="tool-result-inline' + errClass + '"><div class="tool-result-header">' + (isError ? "Error" : "Output") + ' <span class="result-size">' + charCount.toLocaleString() + " chars</span></div>" + resultCode + "</div>";
       }
+      var resultImages = extractResultImages(result);
+      if (resultImages) {
+        resultHtml += resultImages;
+      }
     }
 
     var openByDefault = name === "Edit" || name === "Write";
@@ -424,6 +453,8 @@
         } else if (c.type === "tool_use") {
           var result = c.id ? toolResultMap[c.id] || null : null;
           parts.push(renderToolUse(c, result, commitSha, subagents, author));
+        } else if (c.type === "image") {
+          parts.push(renderImage(c));
         }
       }
 
@@ -441,19 +472,21 @@
         return { role: "user", html: '<div class="msg-item">' + renderMarkdown(content) + "</div>" };
       }
 
-      var textParts = [];
+      var userParts = [];
       for (var i = 0; i < content.length; i++) {
         var c = content[i];
         if (c.type === "text" && c.text && c.text.trim()) {
           if (c.text.startsWith("<local-command") || c.text.startsWith("<command-")) continue;
           if (c.text.startsWith("<system-reminder")) continue;
           if (c.text.startsWith("<local-command-stdout")) continue;
-          textParts.push(c.text);
+          userParts.push(renderMarkdown(c.text));
+        } else if (c.type === "image") {
+          userParts.push(renderImage(c));
         }
       }
 
-      if (textParts.length === 0) return null;
-      return { role: "user", html: '<div class="msg-item">' + renderMarkdown(textParts.join("\n").trim()) + "</div>" };
+      if (userParts.length === 0) return null;
+      return { role: "user", html: '<div class="msg-item">' + userParts.join("\n") + "</div>" };
     }
 
     if (msg.type === "system") {
@@ -1016,5 +1049,17 @@
     }
   }
 
+  // ── Lightbox for images ──────────────────────────────────────────────────
+  window.openLightbox = function (src) {
+    var overlay = document.createElement("div");
+    overlay.className = "lightbox-overlay";
+    overlay.innerHTML = '<img src="' + src + '" class="lightbox-img">';
+    overlay.addEventListener("click", function () {
+      overlay.remove();
+    });
+    document.body.appendChild(overlay);
+  };
+
   main();
 })();
+

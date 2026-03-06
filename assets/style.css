@@ -712,6 +712,48 @@ details[open] > .tool-result-summary::before {
   color: var(--accent-red);
 }
 
+/* ── Image blocks ──────────────────────────────────────────────────────── */
+
+.image-block {
+  margin: 8px 0;
+}
+
+.image-block a {
+  display: inline-block;
+}
+
+.image-block img {
+  max-width: 240px;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.image-block img:hover {
+  border-color: var(--accent-blue);
+}
+
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
 /* ── Thinking blocks ────────────────────────────────────────────────────── */
 
 .thinking-block {
