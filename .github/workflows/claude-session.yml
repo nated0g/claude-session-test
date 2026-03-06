@@ -41,6 +41,20 @@ jobs:
           done
           echo "found=$FOUND" >> "$GITHUB_OUTPUT"
 
+      - name: Snapshot current deployment ID
+        if: steps.extract.outputs.found == 'true'
+        id: pre-deploy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              environment: 'github-pages', per_page: 1,
+            });
+            const id = data.length > 0 ? String(data[0].id) : '0';
+            core.setOutput('deployment_id', id);
+            core.info(`Current latest deployment: ${id}`);
+
       - name: Deploy to gh-pages
         if: steps.extract.outputs.found == 'true'
         run: |
@@ -91,26 +105,33 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // Wait for the gh-pages deployment triggered by our push to finish
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const maxWait = 120000; // 2 minutes
+            const maxWait = 120000;
             const poll = 5000;
+
+            // Use deployment ID captured before the gh-pages push
+            const prevId = parseInt('${{ steps.pre-deploy.outputs.deployment_id }}', 10);
+            core.info(`Previous deployment ID: ${prevId}`);
+
+            // Wait for a NEW deployment (higher ID) to reach success
             const start = Date.now();
             while (Date.now() - start < maxWait) {
               const { data: deployments } = await github.rest.repos.listDeployments({
                 owner, repo, environment: 'github-pages', per_page: 1,
               });
-              if (deployments.length > 0) {
+              if (deployments.length > 0 && deployments[0].id > prevId) {
                 const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
                   owner, repo, deployment_id: deployments[0].id, per_page: 1,
                 });
                 if (statuses.length > 0 && statuses[0].state === 'success') {
-                  core.info('Pages deployment is live');
+                  core.info(`Deployment ${deployments[0].id} is live`);
                   break;
                 }
+                core.info(`Deployment ${deployments[0].id} state: ${statuses[0]?.state || 'pending'}`);
+              } else {
+                core.info('Waiting for new deployment to appear...');
               }
-              core.info('Waiting for Pages deployment...');
               await new Promise(r => setTimeout(r, poll));
             }
 
