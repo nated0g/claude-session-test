@@ -590,7 +590,7 @@
 
   // ── Render a full session into the DOM ──────────────────────────────────────
 
-  function renderSession(jsonlText, commitSha) {
+  function renderSession(jsonlText, commitSha, commitAuthor) {
     var data = parseBundledJsonl(jsonlText);
     var main = data.main;
     var subagents = data.subagents;
@@ -601,8 +601,8 @@
       if (main[i].version) { version = main[i].version; break; }
     }
 
-    // Extract author from the session data or use default
-    var author = params.get("author") || "User";
+    // Author is passed in from index.json (trusted, written by CI)
+    var author = commitAuthor || "User";
 
     // Extract timestamp range
     var firstTs = "", lastTs = "";
@@ -691,7 +691,6 @@
         var shortSha = s.sha.slice(0, 8);
         var url = "?pr=" + encodeURIComponent(prNumber) + "&sha=" + encodeURIComponent(s.sha);
         if (repoUrl) url += "&repo=" + encodeURIComponent(repoUrl);
-        if (s.author) url += "&author=" + encodeURIComponent(s.author);
         html += '<a class="pr-index-item" href="' + esc(url) + '">';
         html += '<code class="pr-index-sha">' + esc(shortSha) + "</code>";
         if (s.author) html += '<span class="pr-index-author">' + esc(s.author) + "</span>";
@@ -866,17 +865,27 @@
     }
 
     if (sha) {
-      // Load specific session
+      // Load session JSONL + index.json (for trusted author) in parallel
       showLoading("Loading session " + sha.slice(0, 8) + "...");
-      var url = "data/pr/" + encodeURIComponent(prNum) + "/" + encodeURIComponent(sha) + ".jsonl";
-      fetch(url)
-        .then(function (res) {
+      var base = "data/pr/" + encodeURIComponent(prNum) + "/";
+      var sessionUrl = base + encodeURIComponent(sha) + ".jsonl";
+      var indexUrl = base + "index.json";
+      Promise.all([
+        fetch(sessionUrl).then(function (res) {
           if (!res.ok) throw new Error("Session not found (HTTP " + res.status + ")");
           return res.text();
-        })
-        .then(function (text) {
+        }),
+        fetch(indexUrl).then(function (res) { return res.ok ? res.json() : []; }).catch(function () { return []; })
+      ])
+        .then(function (results) {
+          var text = results[0];
+          var manifest = results[1];
+          var author = null;
+          for (var i = 0; i < manifest.length; i++) {
+            if (manifest[i].sha === sha) { author = manifest[i].author; break; }
+          }
           hideLoading();
-          renderSession(text, sha);
+          renderSession(text, sha, author);
         })
         .catch(function (err) {
           showError(err.message || "Failed to load session");
