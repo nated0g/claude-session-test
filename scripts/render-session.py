@@ -148,10 +148,60 @@ def render_thinking(text):
 <div class="thinking-content">{render_text_block(display)}</div></details>'''
 
 
-def process_session(lines, label="Main Session"):
-    """Process session JSONL lines into HTML blocks."""
+def extract_agent_id(tool_result_content):
+    """Extract agentId from a Task tool_result content string."""
+    if not isinstance(tool_result_content, str):
+        if isinstance(tool_result_content, list):
+            for item in tool_result_content:
+                if isinstance(item, dict):
+                    text = item.get('text', '')
+                    found = extract_agent_id(text)
+                    if found:
+                        return found
+        return None
+    m = re.search(r'agentId:\s*(\S+)', tool_result_content)
+    return m.group(1) if m else None
+
+
+def render_inline_subagent(sa_lines, desc):
+    """Render a subagent session inline as a collapsible block."""
+    inner = process_session(sa_lines, subagents={})
+    return f'''<details class="subagent"><summary class="subagent-summary">🤖 Subagent: {escape(desc)}</summary>
+{inner}</details>'''
+
+
+def process_session(lines, label="Main Session", subagents=None):
+    """Process session JSONL lines into HTML blocks.
+
+    subagents: dict of agent_id -> (lines, description) for inline rendering
+    """
+    if subagents is None:
+        subagents = {}
+
+    # Build a map of tool_use_id -> agent_id by scanning tool_results
+    tool_use_to_agent = {}
+    for line_data in lines:
+        if line_data.get('type') == 'user':
+            content = line_data.get('message', {}).get('content', [])
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'tool_result':
+                        agent_id = extract_agent_id(c.get('content', ''))
+                        if agent_id:
+                            tool_use_to_agent[c.get('tool_use_id', '')] = agent_id
+
+    # Track which tool_use_ids are Task calls
+    task_tool_use_ids = {}
+    for line_data in lines:
+        if line_data.get('type') == 'assistant':
+            content = line_data.get('message', {}).get('content', [])
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'tool_use' and c.get('name') == 'Task':
+                        task_tool_use_ids[c.get('id', '')] = c.get('input', {}).get('description', '')
+
     blocks = []
-    blocks.append(f'<div class="session-section"><h2>{escape(label)}</h2>')
+    blocks.append(f'<div class="session-section">')
 
     for line_data in lines:
         msg_type = line_data.get('type', '')
@@ -199,9 +249,16 @@ def process_session(lines, label="Main Session"):
                         if text and not text.startswith('<'):  # skip system reminders
                             text_parts.append(render_text_block(text))
                     elif ct == 'tool_result':
-                        r = render_tool_result(c)
-                        if r:
-                            result_parts.append(r)
+                        tool_use_id = c.get('tool_use_id', '')
+                        # Check if this is a Task result with a subagent to inline
+                        agent_id = tool_use_to_agent.get(tool_use_id)
+                        if agent_id and agent_id in subagents:
+                            sa_lines, sa_desc = subagents[agent_id]
+                            result_parts.append(render_inline_subagent(sa_lines, sa_desc))
+                        else:
+                            r = render_tool_result(c)
+                            if r:
+                                result_parts.append(r)
                 if text_parts:
                     blocks.append(f'<div class="msg user"><div class="role user-role">User</div>{"".join(text_parts)}</div>')
                 if result_parts:
@@ -246,7 +303,10 @@ def load_session(session_path):
                                     sa_lines.append(json.loads(line))
                                 except json.JSONDecodeError:
                                     continue
+                    # Strip .jsonl and optional 'agent-' prefix to match agentId in tool results
                     agent_id = sa_file.replace('.jsonl', '')
+                    if agent_id.startswith('agent-'):
+                        agent_id = agent_id[6:]
                     # Try to get a description from the first user message
                     desc = agent_id
                     for sl in sa_lines:
@@ -280,14 +340,7 @@ def build_html(session_path, commit_sha='unknown'):
             break
 
     short_sha = commit_sha[:8]
-    main_html = process_session(main_lines, "Main Session")
-
-    subagent_html = ''
-    if subagents:
-        for agent_id, (sa_lines, desc) in subagents.items():
-            subagent_html += f'<details class="subagent"><summary class="subagent-summary">🤖 Subagent: {escape(desc)}</summary>'
-            subagent_html += process_session(sa_lines, f"Subagent: {agent_id}")
-            subagent_html += '</details>'
+    main_html = process_session(main_lines, "Main Session", subagents=subagents)
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -483,7 +536,6 @@ pre.diff {{
 <h1>Claude Code Session</h1>
 <div class="meta">Commit: {escape(commit_sha)}{f' | Claude Code {escape(version)}' if version else ''}</div>
 {main_html}
-{subagent_html}
 </body>
 </html>'''
 
