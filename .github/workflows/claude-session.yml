@@ -86,6 +86,34 @@ jobs:
           git commit -m "Update session pages for PR #${PR_NUM}" || echo "No changes to commit"
           git push origin gh-pages
 
+      - name: Wait for Pages deployment
+        if: steps.extract.outputs.found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Wait for the gh-pages deployment triggered by our push to finish
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const maxWait = 120000; // 2 minutes
+            const poll = 5000;
+            const start = Date.now();
+            while (Date.now() - start < maxWait) {
+              const { data: deployments } = await github.rest.repos.listDeployments({
+                owner, repo, environment: 'github-pages', per_page: 1,
+              });
+              if (deployments.length > 0) {
+                const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                  owner, repo, deployment_id: deployments[0].id, per_page: 1,
+                });
+                if (statuses.length > 0 && statuses[0].state === 'success') {
+                  core.info('Pages deployment is live');
+                  break;
+                }
+              }
+              core.info('Waiting for Pages deployment...');
+              await new Promise(r => setTimeout(r, poll));
+            }
+
       - name: Comment on PR
         if: steps.extract.outputs.found == 'true'
         uses: actions/github-script@v7
