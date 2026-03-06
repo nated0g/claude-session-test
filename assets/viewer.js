@@ -1,6 +1,6 @@
 /* Claude Code Session Viewer — client-side renderer + interactivity
  * Supports: text, markdown, tool use, thinking blocks, and inline base64 images
- * Images render as clickable thumbnails with a lightbox overlay */
+ * Images render as clickable thumbnails with lightbox overlay */
 
 (function () {
   "use strict";
