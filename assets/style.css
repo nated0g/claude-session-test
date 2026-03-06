@@ -712,6 +712,20 @@ details[open] > .tool-result-summary::before {
   color: var(--accent-red);
 }
 
+/* ── Image blocks ──────────────────────────────────────────────────────── */
+
+.image-block {
+  margin: 8px 0;
+  padding: 4px;
+}
+
+.image-block img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
 /* ── Thinking blocks ────────────────────────────────────────────────────── */
 
 .thinking-block {
