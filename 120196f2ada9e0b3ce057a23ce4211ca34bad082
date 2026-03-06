@@ -1,0 +1,6 @@
+{"type":"system","message":"Claude Code session started","timestamp":"2026-03-05T10:00:00Z"}
+{"type":"user","message":"Create a greeting module in Python","timestamp":"2026-03-05T10:00:05Z"}
+{"type":"assistant","message":"I'll create a simple greeting module for you.","timestamp":"2026-03-05T10:00:07Z"}
+{"type":"tool_use","tool":"Write","input":{"file_path":"hello.py","content":"def greet(name: str) -> str:\n    return f\"Hello, {name}!\"\n\nif __name__ == \"__main__\":\n    print(greet(\"world\"))"},"timestamp":"2026-03-05T10:00:08Z"}
+{"type":"tool_result","tool":"Write","output":"File created successfully","timestamp":"2026-03-05T10:00:08Z"}
+{"type":"assistant","message":"I've created `hello.py` with a `greet` function that takes a name and returns a greeting string.","timestamp":"2026-03-05T10:00:10Z"}
