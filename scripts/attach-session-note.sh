@@ -17,10 +17,6 @@ echo "$COMMAND" | grep -q "git commit" || exit 0
 # Don't attach notes for amend
 echo "$COMMAND" | grep -q "\-\-amend" && exit 0
 
-# Check if the tool reported an error (commit might have failed)
-TOOL_ERROR=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_error', False))" 2>/dev/null)
-[ "$TOOL_ERROR" = "True" ] && exit 0
-
 # Get session info
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
 CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('cwd',''))" 2>/dev/null)
@@ -40,9 +36,7 @@ done
 
 [ -n "$SESSION_FILE" ] || exit 0
 
-# Figure out the git working directory.
-# If the command starts with "cd /some/path &&", extract that path.
-# Otherwise fall back to the hook's CWD.
+# Figure out the git working directory
 GIT_DIR="$CWD"
 CD_PATH=$(echo "$COMMAND" | python3 -c "
 import sys, re
@@ -58,26 +52,35 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
 
-# Bundle session + subagents into a single file
-BUNDLE_FILE=$(mktemp)
-trap 'rm -f "$BUNDLE_FILE"' EXIT
-
-# Main session
-cp "$SESSION_FILE" "$BUNDLE_FILE"
-
-# Check for subagent sessions
+# Bundle session + subagents as base64-encoded JSON manifest
 SESSION_DIR="${SESSION_FILE%.jsonl}"
-if [ -d "$SESSION_DIR/subagents" ]; then
-    for sa in "$SESSION_DIR"/subagents/*.jsonl; do
-        [ -f "$sa" ] || continue
-        AGENT_ID=$(basename "$sa" .jsonl)
-        echo "" >> "$BUNDLE_FILE"
-        echo "===CLAUDE_SUBAGENT_BOUNDARY:${AGENT_ID}===" >> "$BUNDLE_FILE"
-        cat "$sa" >> "$BUNDLE_FILE"
-    done
-fi
 
-# Attach as git note (overwrite if exists)
-git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
+python3 -c "
+import json, base64, os, sys
+
+session_file = sys.argv[1]
+session_dir = sys.argv[2]
+
+manifest = {}
+
+with open(session_file, 'rb') as f:
+    manifest['main'] = base64.b64encode(f.read()).decode('ascii')
+
+subagents_dir = os.path.join(session_dir, 'subagents')
+if os.path.isdir(subagents_dir):
+    manifest['subagents'] = {}
+    for sa_file in sorted(os.listdir(subagents_dir)):
+        if sa_file.endswith('.jsonl'):
+            sa_path = os.path.join(subagents_dir, sa_file)
+            agent_id = sa_file[:-6]  # strip .jsonl
+            with open(sa_path, 'rb') as f:
+                manifest['subagents'][agent_id] = base64.b64encode(f.read()).decode('ascii')
+
+json.dump(manifest, sys.stdout)
+" "$SESSION_FILE" "$SESSION_DIR" > /tmp/claude-session-manifest-$$.json
+
+# Attach as git note
+git notes --ref=claude-sessions add -f -F /tmp/claude-session-manifest-$$.json "$HEAD_SHA" 2>/dev/null || true
+rm -f /tmp/claude-session-manifest-$$.json
 
 exit 0

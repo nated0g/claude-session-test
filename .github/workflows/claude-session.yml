@@ -25,32 +25,30 @@ jobs:
           mkdir -p sessions
           FOUND=false
           for SHA in $(git log --format='%H' origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}); do
-            NOTE_FILE="sessions/${SHA}.jsonl"
-            git notes --ref=claude-sessions show "$SHA" > "$NOTE_FILE" 2>/dev/null || { rm -f "$NOTE_FILE"; continue; }
+            MANIFEST="sessions/${SHA}.manifest.json"
+            git notes --ref=claude-sessions show "$SHA" > "$MANIFEST" 2>/dev/null || { rm -f "$MANIFEST"; continue; }
 
-            # Split bundled file into main + subagents
-            SESSION_DIR="sessions/${SHA}"
-            mkdir -p "${SESSION_DIR}/subagents"
-
-            # Split on ---SUBAGENT:xxx--- markers
+            # Unpack base64-encoded JSON manifest into session files
             python3 -c "
-          import sys, os
-          main_file = sys.argv[1]
-          session_dir = sys.argv[2]
-          with open(main_file) as f:
-              content = f.read()
-          parts = content.split('===CLAUDE_SUBAGENT_BOUNDARY:')
-          # First part is the main session
-          with open(main_file, 'w') as f:
-              f.write(parts[0].rstrip())
-          # Remaining parts are subagents
-          for part in parts[1:]:
-              agent_id, _, agent_content = part.partition('===\n')
-              agent_id = agent_id.strip()
-              sa_path = os.path.join(session_dir, 'subagents', f'{agent_id}.jsonl')
-              with open(sa_path, 'w') as f:
-                  f.write(agent_content.rstrip())
-          " "$NOTE_FILE" "$SESSION_DIR"
+          import json, base64, os, sys
+          manifest_file = sys.argv[1]
+          sha = sys.argv[2]
+          with open(manifest_file) as f:
+              manifest = json.load(f)
+          # Write main session
+          main_path = f'sessions/{sha}.jsonl'
+          with open(main_path, 'wb') as f:
+              f.write(base64.b64decode(manifest['main']))
+          # Write subagent sessions
+          if 'subagents' in manifest:
+              sa_dir = f'sessions/{sha}/subagents'
+              os.makedirs(sa_dir, exist_ok=True)
+              for agent_id, b64_content in manifest['subagents'].items():
+                  sa_path = os.path.join(sa_dir, f'{agent_id}.jsonl')
+                  with open(sa_path, 'wb') as f:
+                      f.write(base64.b64decode(b64_content))
+          os.remove(manifest_file)
+          " "$MANIFEST" "$SHA"
 
             FOUND=true
           done
