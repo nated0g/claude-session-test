@@ -199,6 +199,40 @@ main {
   cursor: pointer;
 }
 
+/* ── Anchor links ──────────────────────────────────────────────────────── */
+
+.msg-anchor {
+  position: absolute;
+  right: 0;
+  top: 20px;
+  color: var(--text-dim);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.msg-group:hover .msg-anchor {
+  opacity: 0.4;
+}
+
+.msg-anchor:hover {
+  opacity: 1 !important;
+  color: var(--text-link);
+}
+
+.msg-anchor.copied {
+  opacity: 1 !important;
+  color: var(--accent-green);
+}
+
+.msg-group:target {
+  background: rgba(56, 139, 253, 0.06);
+  border-radius: var(--radius);
+}
+
 /* ── Avatar ─────────────────────────────────────────────────────────────── */
 
 .avatar {
