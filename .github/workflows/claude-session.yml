@@ -25,68 +25,45 @@ jobs:
           mkdir -p sessions
           FOUND=false
           for SHA in $(git log --format='%H' origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}); do
-            NOTE=$(git notes --ref=claude-sessions show "$SHA" 2>/dev/null) || continue
-            echo "$NOTE" > "sessions/${SHA}.jsonl"
+            NOTE_FILE="sessions/${SHA}.jsonl"
+            git notes --ref=claude-sessions show "$SHA" > "$NOTE_FILE" 2>/dev/null || { rm -f "$NOTE_FILE"; continue; }
+
+            # Split bundled file into main + subagents
+            SESSION_DIR="sessions/${SHA}"
+            mkdir -p "${SESSION_DIR}/subagents"
+
+            # Split on ---SUBAGENT:xxx--- markers
+            python3 -c "
+          import sys, os
+          main_file = sys.argv[1]
+          session_dir = sys.argv[2]
+          with open(main_file) as f:
+              content = f.read()
+          parts = content.split('---SUBAGENT:')
+          # First part is the main session
+          with open(main_file, 'w') as f:
+              f.write(parts[0].rstrip())
+          # Remaining parts are subagents
+          for part in parts[1:]:
+              agent_id, _, agent_content = part.partition('---\n')
+              agent_id = agent_id.strip()
+              sa_path = os.path.join(session_dir, 'subagents', f'{agent_id}.jsonl')
+              with open(sa_path, 'w') as f:
+                  f.write(agent_content.rstrip())
+          " "$NOTE_FILE" "$SESSION_DIR"
+
             FOUND=true
           done
           echo "found=$FOUND" >> "$GITHUB_OUTPUT"
 
-      - name: Generate HTML pages
+      - name: Render HTML pages
         if: steps.extract.outputs.found == 'true'
         run: |
           PR_NUM=${{ github.event.pull_request.number }}
           mkdir -p "deploy/pr/${PR_NUM}"
           for f in sessions/*.jsonl; do
             SHA=$(basename "$f" .jsonl)
-            SHORT=${SHA:0:8}
-            cat > "deploy/pr/${PR_NUM}/${SHA}.html" << HTMLEOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Claude Session — ${SHORT}</title>
-            <style>
-              body { font-family: monospace; background: #1e1e2e; color: #cdd6f4; max-width: 900px; margin: 0 auto; padding: 20px; }
-              h1 { color: #89b4fa; font-size: 1.2em; }
-              .meta { color: #6c7086; font-size: 0.85em; margin-bottom: 20px; }
-              pre { background: #313244; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
-              .msg { margin: 12px 0; padding: 10px; border-radius: 6px; }
-              .user { background: #313244; border-left: 3px solid #89b4fa; }
-              .assistant { background: #1e1e2e; border-left: 3px solid #a6e3a1; }
-              .tool { background: #181825; border-left: 3px solid #fab387; }
-              .role { font-weight: bold; margin-bottom: 4px; }
-              .role.user-role { color: #89b4fa; }
-              .role.assistant-role { color: #a6e3a1; }
-              .role.tool-role { color: #fab387; }
-            </style>
-          </head>
-          <body>
-            <h1>Claude Code Session</h1>
-            <div class="meta">Commit: ${SHA}</div>
-            <div id="session"></div>
-            <script>
-              const raw = $(cat "$f" | python3 -c "import sys,json; lines=[json.loads(l) for l in sys.stdin]; print(json.dumps(json.dumps(lines)))");
-              const messages = JSON.parse(raw);
-              const container = document.getElementById('session');
-              for (const msg of messages) {
-                const div = document.createElement('div');
-                const type = msg.type || 'unknown';
-                let cls = 'msg';
-                let role = type;
-                if (type === 'user') { cls += ' user'; role = 'User'; }
-                else if (type === 'assistant') { cls += ' assistant'; role = 'Assistant'; }
-                else if (type.includes('tool')) { cls += ' tool'; role = type === 'tool_use' ? 'Tool: ' + (msg.tool || '') : 'Tool Result'; }
-                else { cls += ' tool'; }
-                div.className = cls;
-                const roleClass = type === 'user' ? 'user-role' : type === 'assistant' ? 'assistant-role' : 'tool-role';
-                let content = msg.message || msg.output || '';
-                if (msg.input) content = JSON.stringify(msg.input, null, 2);
-                div.innerHTML = '<div class="role ' + roleClass + '">' + role + '</div><pre>' + (content || '').replace(/</g,'&lt;') + '</pre>';
-                container.appendChild(div);
-              }
-            </script>
-          </body>
-          </html>
-          HTMLEOF
+            python3 scripts/render-session.py "$f" "$SHA" > "deploy/pr/${PR_NUM}/${SHA}.html"
           done
 
       - name: Deploy to gh-pages
@@ -97,9 +74,10 @@ jobs:
           git fetch origin gh-pages
           git checkout gh-pages
           PR_NUM=${{ github.event.pull_request.number }}
-          cp -r deploy/pr/ pr/ 2>/dev/null || true
+          mkdir -p "pr/${PR_NUM}"
+          cp deploy/pr/${PR_NUM}/*.html "pr/${PR_NUM}/"
           git add pr/
-          git commit -m "Add session pages for PR #${PR_NUM}" || echo "No changes to commit"
+          git commit -m "Update session pages for PR #${PR_NUM}" || echo "No changes to commit"
           git push origin gh-pages
 
       - name: Comment on PR
@@ -110,14 +88,13 @@ jobs:
             const fs = require('fs');
             const prNum = context.issue.number;
 
-            // Get GitHub Pages URL
             const { data: pages } = await github.rest.repos.getPages({
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
             const baseUrl = pages.html_url.replace(/\/$/, '');
 
-            const files = fs.readdirSync('sessions');
+            const files = fs.readdirSync('sessions').filter(f => f.endsWith('.jsonl'));
             let body = `### Claude Code Sessions\n\n`;
             body += `Found ${files.length} session(s) attached to commits in this PR.\n\n`;
             for (const f of files) {
