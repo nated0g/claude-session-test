@@ -203,7 +203,8 @@
     var src = block.source;
     if (!src || !src.data) return "";
     var mediaType = src.media_type || "image/png";
-    return '<div class="image-block"><img src="data:' + mediaType + ';base64,' + src.data + '" alt="Session image" loading="lazy"></div>';
+    var dataUrl = 'data:' + mediaType + ';base64,' + src.data;
+    return '<div class="image-block"><a href="' + dataUrl + '" target="_blank" rel="noopener"><img src="' + dataUrl + '" alt="Session image" loading="lazy"></a></div>';
   }
 
   // ── Extract tool result content ─────────────────────────────────────────────
