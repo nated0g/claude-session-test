@@ -51,7 +51,7 @@ SUBAGENTS_DIR="${SESSION_DIR}/subagents"
 
 # Start with main session
 MAIN_B64=$(base64 < "$SESSION_FILE")
-ENVELOPE=$(jq -n --arg main "$MAIN_B64" '{main: $main, subagents: {}}')
+ENVELOPE=$(jq -n --arg main "$MAIN_B64" --arg sid "$SESSION_ID" '{session_id: $sid, main: $main, subagents: {}}')
 
 # Add subagents if present
 if [ -d "$SUBAGENTS_DIR" ]; then
@@ -66,15 +66,13 @@ fi
 echo "$ENVELOPE" > "$BUNDLE_FILE"
 
 # Remove notes from earlier commits in THIS session (avoid duplicates)
-# Track which commits we've noted per session, so we only remove our own
-TRACK_FILE="/tmp/claude-session-track-${SESSION_ID}"
-if [ -f "$TRACK_FILE" ]; then
-    while IFS= read -r OLD_SHA; do
-        [ -n "$OLD_SHA" ] && [ "$OLD_SHA" != "$HEAD_SHA" ] && \
-            git notes --ref=claude-sessions remove "$OLD_SHA" 2>/dev/null || true
-    done < "$TRACK_FILE"
-fi
-echo "$HEAD_SHA" > "$TRACK_FILE"
+# Scan existing notes for matching session_id and remove them
+for NOTED_SHA in $(git notes --ref=claude-sessions list 2>/dev/null | awk '{print $2}'); do
+    [ "$NOTED_SHA" = "$HEAD_SHA" ] && continue
+    # Check if this note has the same session_id
+    OLD_SID=$(git notes --ref=claude-sessions show "$NOTED_SHA" 2>/dev/null | jq -r '.session_id // ""' 2>/dev/null) || continue
+    [ "$OLD_SID" = "$SESSION_ID" ] && git notes --ref=claude-sessions remove "$NOTED_SHA" 2>/dev/null || true
+done
 
 # Attach as git note
 git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
