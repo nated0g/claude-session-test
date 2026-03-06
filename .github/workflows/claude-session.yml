@@ -24,9 +24,19 @@ jobs:
         run: |
           mkdir -p sessions
           FOUND=false
+          SEEN_SESSIONS=""
+          # git log is newest-first, so we keep the latest note per session_id
           for SHA in $(git log --format='%H' origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}); do
             RAW_NOTE="/tmp/note-${SHA}.json"
             git notes --ref=claude-sessions show "$SHA" > "$RAW_NOTE" 2>/dev/null || { rm -f "$RAW_NOTE"; continue; }
+
+            # Deduplicate by session_id — skip if we already have this session from a newer commit
+            SID=$(jq -r '.session_id // ""' "$RAW_NOTE")
+            if [ -n "$SID" ] && echo "$SEEN_SESSIONS" | grep -qF "$SID"; then
+              rm -f "$RAW_NOTE"
+              continue
+            fi
+            [ -n "$SID" ] && SEEN_SESSIONS="$SEEN_SESSIONS $SID"
 
             # Decode base64 JSON envelope → raw JSONL with ---SUBAGENT: delimiters
             OUT="sessions/${SHA}.jsonl"

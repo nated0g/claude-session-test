@@ -65,20 +65,13 @@ fi
 
 echo "$ENVELOPE" > "$BUNDLE_FILE"
 
-# Sync with remote FIRST so local notes are up-to-date before we modify them
-git fetch origin refs/notes/claude-sessions:refs/notes/claude-sessions-remote 2>/dev/null \
-  && git notes --ref=claude-sessions merge refs/notes/claude-sessions-remote 2>/dev/null || true
-
-# Remove notes from earlier commits in THIS session (avoid duplicates)
-for NOTED_SHA in $(git notes --ref=claude-sessions list 2>/dev/null | awk '{print $2}'); do
-    [ "$NOTED_SHA" = "$HEAD_SHA" ] && continue
-    OLD_SID=$(git notes --ref=claude-sessions show "$NOTED_SHA" 2>/dev/null | jq -r '.session_id // ""' 2>/dev/null) || continue
-    [ "$OLD_SID" = "$SESSION_ID" ] && git notes --ref=claude-sessions remove "$NOTED_SHA" 2>/dev/null || true
-done
-
-# Attach as git note and push
+# Attach as git note
 git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
 rm -f "$BUNDLE_FILE"
+
+# Push the note ref — merge remote first to avoid non-fast-forward rejection
+git fetch origin refs/notes/claude-sessions:refs/notes/claude-sessions-remote 2>/dev/null \
+  && git notes --ref=claude-sessions merge refs/notes/claude-sessions-remote 2>/dev/null || true
 git push origin refs/notes/claude-sessions 2>/dev/null || true
 
 exit 0
