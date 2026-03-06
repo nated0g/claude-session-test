@@ -21,6 +21,11 @@ interface ContentBlock {
   tool_use_id?: string;
   content?: string | ContentBlock[];
   is_error?: boolean;
+  source?: {
+    type: string;
+    media_type?: string;
+    data?: string;
+  };
 }
 
 interface SessionMessage {
@@ -428,6 +433,10 @@ function renderToolUse(
         resultHtml = `<details class="tool-result-details${errClass}"><summary class="tool-result-summary">${resultLabel} <span class="result-size">${charCount.toLocaleString()} chars</span></summary>${resultCode}</details>`;
       }
     }
+    const resultImages = extractResultImages(result);
+    if (resultImages) {
+      resultHtml += resultImages;
+    }
   }
 
   // Don't HTML-escape the summaryLabel since it may contain our badge HTML
@@ -440,6 +449,13 @@ function renderToolUse(
 </div>`;
 }
 
+function renderImage(block: ContentBlock): string {
+  const src = block.source;
+  if (!src || !src.data) return "";
+  const mediaType = src.media_type || "image/png";
+  return `<div class="image-block"><img src="data:${mediaType};base64,${src.data}" alt="Session image" loading="lazy"></div>`;
+}
+
 function extractResultContent(block: ContentBlock): string {
   const content = block.content;
   if (typeof content === "string") return content;
@@ -450,6 +466,15 @@ function extractResultContent(block: ContentBlock): string {
       .join("\n");
   }
   return "";
+}
+
+function extractResultImages(block: ContentBlock): string {
+  const content = block.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((c) => typeof c === "object" && c.type === "image")
+    .map((c) => renderImage(c as ContentBlock))
+    .join("\n");
 }
 
 // ── Build tool result map ──────────────────────────────────────────────────────
@@ -514,6 +539,8 @@ function renderMessage(
       } else if (c.type === "tool_use") {
         const result = c.id ? toolResultMap[c.id] || null : null;
         parts.push(renderToolUse(c, result, repoUrl, commitSha));
+      } else if (c.type === "image") {
+        parts.push(renderImage(c));
       }
     }
 
@@ -531,18 +558,20 @@ function renderMessage(
       return { role: "user", html: `<div class="msg-item">${renderMarkdown(content)}</div>` };
     }
 
-    const textParts: string[] = [];
+    const userParts: string[] = [];
     for (const c of content) {
       if (c.type === "text" && c.text?.trim()) {
         if (c.text.startsWith("<local-command") || c.text.startsWith("<command-")) continue;
         if (c.text.startsWith("<system-reminder")) continue;
         if (c.text.startsWith("<local-command-stdout")) continue;
-        textParts.push(c.text);
+        userParts.push(renderMarkdown(c.text));
+      } else if (c.type === "image") {
+        userParts.push(renderImage(c));
       }
     }
 
-    if (textParts.length === 0) return null;
-    return { role: "user", html: `<div class="msg-item">${renderMarkdown(textParts.join("\n").trim())}</div>` };
+    if (userParts.length === 0) return null;
+    return { role: "user", html: `<div class="msg-item">${userParts.join("\n")}</div>` };
   }
 
   if (msg.type === "system") {
