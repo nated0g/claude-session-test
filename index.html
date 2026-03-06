@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Sessions</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/highlight-github-dark.min.css">
+</head>
+<body>
+<header class="page-header">
+  <div class="header-inner">
+    <h1>Claude Code Session</h1>
+    <div class="meta" id="meta"></div>
+    <div class="header-actions" id="header-actions"></div>
+  </div>
+</header>
+<div id="loading" class="loading-state">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading session...</div>
+</div>
+<div id="error" class="error-state" style="display:none"></div>
+<nav class="sidebar" id="sidebar" style="display:none"></nav>
+<main id="main" style="display:none"></main>
+<script src="assets/highlight.min.js"></script>
+<script src="assets/marked.min.js"></script>
+<script src="assets/diff.min.js"></script>
+<script src="assets/viewer.js"></script>
+</body>
+</html>
