@@ -49,21 +49,24 @@ BUNDLE_FILE="/tmp/claude-session-bundle-$$.json"
 SESSION_DIR="${SESSION_FILE%.jsonl}"
 SUBAGENTS_DIR="${SESSION_DIR}/subagents"
 
-# Start with main session
-MAIN_B64=$(base64 < "$SESSION_FILE")
-ENVELOPE=$(jq -n --arg main "$MAIN_B64" --arg sid "$SESSION_ID" '{session_id: $sid, main: $main, subagents: {}}')
+# Start with main session — use files to avoid ARG_MAX limits
+MAIN_B64_FILE="/tmp/claude-main-b64-$$.txt"
+base64 < "$SESSION_FILE" > "$MAIN_B64_FILE"
+jq -n --rawfile main "$MAIN_B64_FILE" --arg sid "$SESSION_ID" '{session_id: $sid, main: $main, subagents: {}}' > "$BUNDLE_FILE"
+rm -f "$MAIN_B64_FILE"
 
 # Add subagents if present
 if [ -d "$SUBAGENTS_DIR" ]; then
     for sa_file in "$SUBAGENTS_DIR"/*.jsonl; do
         [ -f "$sa_file" ] || continue
         agent_id=$(basename "$sa_file" .jsonl)
-        sa_b64=$(base64 < "$sa_file")
-        ENVELOPE=$(echo "$ENVELOPE" | jq --arg id "$agent_id" --arg b64 "$sa_b64" '.subagents[$id] = $b64')
+        SA_B64_FILE="/tmp/claude-sa-b64-$$.txt"
+        base64 < "$sa_file" > "$SA_B64_FILE"
+        jq --rawfile b64 "$SA_B64_FILE" --arg id "$agent_id" '.subagents[$id] = $b64' "$BUNDLE_FILE" > "${BUNDLE_FILE}.tmp"
+        mv "${BUNDLE_FILE}.tmp" "$BUNDLE_FILE"
+        rm -f "$SA_B64_FILE"
     done
 fi
-
-echo "$ENVELOPE" > "$BUNDLE_FILE"
 
 # Attach as git note
 git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
