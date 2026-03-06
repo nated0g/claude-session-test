@@ -204,7 +204,7 @@
     if (!src || !src.data) return "";
     var mediaType = src.media_type || "image/png";
     var dataUrl = 'data:' + mediaType + ';base64,' + src.data;
-    return '<div class="image-block"><a href="' + dataUrl + '" target="_blank" rel="noopener"><img src="' + dataUrl + '" alt="Session image" loading="lazy"></a></div>';
+    return '<div class="image-block"><img src="' + dataUrl + '" alt="Session image" loading="lazy" onclick="openLightbox(this.src)"></div>';
   }
 
   // ── Extract tool result content ─────────────────────────────────────────────
@@ -1047,6 +1047,17 @@
         });
     }
   }
+
+  // ── Lightbox for images ──────────────────────────────────────────────────
+  window.openLightbox = function (src) {
+    var overlay = document.createElement("div");
+    overlay.className = "lightbox-overlay";
+    overlay.innerHTML = '<img src="' + src + '" class="lightbox-img">';
+    overlay.addEventListener("click", function () {
+      overlay.remove();
+    });
+    document.body.appendChild(overlay);
+  };
 
   main();
 })();
