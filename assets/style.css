@@ -203,28 +203,25 @@ main {
 
 .msg-anchor {
   position: absolute;
-  right: 0;
-  top: 20px;
+  right: -8px;
+  top: 24px;
   color: var(--text-dim);
   text-decoration: none;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  padding: 2px;
-  display: flex;
-  align-items: center;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  padding: 4px;
+  line-height: 1;
 }
 
 .msg-group:hover .msg-anchor {
-  opacity: 0.4;
+  opacity: 1;
 }
 
 .msg-anchor:hover {
-  opacity: 1 !important;
-  color: var(--text-link);
+  color: var(--text-secondary);
 }
 
 .msg-anchor.copied {
-  opacity: 1 !important;
   color: var(--accent-green);
 }
 
