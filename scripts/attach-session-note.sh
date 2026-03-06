@@ -65,6 +65,17 @@ fi
 
 echo "$ENVELOPE" > "$BUNDLE_FILE"
 
+# Remove notes from earlier commits in THIS session (avoid duplicates)
+# Track which commits we've noted per session, so we only remove our own
+TRACK_FILE="/tmp/claude-session-track-${SESSION_ID}"
+if [ -f "$TRACK_FILE" ]; then
+    while IFS= read -r OLD_SHA; do
+        [ -n "$OLD_SHA" ] && [ "$OLD_SHA" != "$HEAD_SHA" ] && \
+            git notes --ref=claude-sessions remove "$OLD_SHA" 2>/dev/null || true
+    done < "$TRACK_FILE"
+fi
+echo "$HEAD_SHA" > "$TRACK_FILE"
+
 # Attach as git note
 git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
 rm -f "$BUNDLE_FILE"
