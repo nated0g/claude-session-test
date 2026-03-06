@@ -72,7 +72,7 @@ if [ -d "$SESSION_DIR/subagents" ]; then
         [ -f "$sa" ] || continue
         AGENT_ID=$(basename "$sa" .jsonl)
         echo "" >> "$BUNDLE_FILE"
-        echo "---SUBAGENT:${AGENT_ID}---" >> "$BUNDLE_FILE"
+        echo "===CLAUDE_SUBAGENT_BOUNDARY:${AGENT_ID}===" >> "$BUNDLE_FILE"
         cat "$sa" >> "$BUNDLE_FILE"
     done
 fi

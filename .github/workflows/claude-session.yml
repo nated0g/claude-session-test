@@ -39,13 +39,13 @@ jobs:
           session_dir = sys.argv[2]
           with open(main_file) as f:
               content = f.read()
-          parts = content.split('---SUBAGENT:')
+          parts = content.split('===CLAUDE_SUBAGENT_BOUNDARY:')
           # First part is the main session
           with open(main_file, 'w') as f:
               f.write(parts[0].rstrip())
           # Remaining parts are subagents
           for part in parts[1:]:
-              agent_id, _, agent_content = part.partition('---\n')
+              agent_id, _, agent_content = part.partition('===\n')
               agent_id = agent_id.strip()
               sa_path = os.path.join(session_dir, 'subagents', f'{agent_id}.jsonl')
               with open(sa_path, 'w') as f:
