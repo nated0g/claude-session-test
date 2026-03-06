@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Claude Code PostToolUse hook: attaches the current session as a git note after git commit.
-# Produces bundled JSONL: main session + ---SUBAGENT:id---\n delimited subagents.
+# Produces base64 JSON envelope: {"main":"b64...","subagents":{"id":"b64...",...}}
+# CI decodes this into raw JSONL for the viewer. Base64 avoids escaping issues in git notes.
 # Receives JSON on stdin with session_id, tool_input, cwd, etc.
+# Requires: jq, base64
 
 set -euo pipefail
 
 INPUT=$(cat)
 
 # Only care about Bash tool calls that contain "git commit" (not --amend)
-COMMAND=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('command',''))" 2>/dev/null)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
 echo "$COMMAND" | grep -q "git commit" || exit 0
 echo "$COMMAND" | grep -q "\-\-amend" && exit 0
 
 # Get session info
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
-CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('cwd',''))" 2>/dev/null)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+CWD=$(echo "$INPUT" | jq -r '.cwd // ""')
 
 [ -n "$SESSION_ID" ] || exit 0
 [ -n "$CWD" ] || exit 0
@@ -33,12 +35,7 @@ done
 
 # Figure out the git working directory
 GIT_DIR="$CWD"
-CD_PATH=$(echo "$COMMAND" | python3 -c "
-import sys, re
-cmd = sys.stdin.read()
-m = re.match(r'cd\s+(\S+)\s*&&', cmd)
-print(m.group(1) if m else '')
-" 2>/dev/null)
+CD_PATH=$(echo "$COMMAND" | sed -n 's/^cd \([^ ]*\) *&&.*/\1/p')
 [ -n "$CD_PATH" ] && GIT_DIR="$CD_PATH"
 
 # Check if we're in a git repo
@@ -47,27 +44,34 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
 
-# Bundle session + subagents as raw JSONL with ---SUBAGENT:id--- delimiters
-BUNDLE_FILE="/tmp/claude-session-bundle-$$.jsonl"
-cp "$SESSION_FILE" "$BUNDLE_FILE"
-
+# Bundle as base64 JSON envelope
+BUNDLE_FILE="/tmp/claude-session-bundle-$$.json"
 SESSION_DIR="${SESSION_FILE%.jsonl}"
 SUBAGENTS_DIR="${SESSION_DIR}/subagents"
 
+# Start with main session
+MAIN_B64=$(base64 < "$SESSION_FILE")
+ENVELOPE=$(jq -n --arg main "$MAIN_B64" '{main: $main, subagents: {}}')
+
+# Add subagents if present
 if [ -d "$SUBAGENTS_DIR" ]; then
     for sa_file in "$SUBAGENTS_DIR"/*.jsonl; do
         [ -f "$sa_file" ] || continue
         agent_id=$(basename "$sa_file" .jsonl)
-        printf '\n---SUBAGENT:%s---\n' "$agent_id" >> "$BUNDLE_FILE"
-        cat "$sa_file" >> "$BUNDLE_FILE"
+        sa_b64=$(base64 < "$sa_file")
+        ENVELOPE=$(echo "$ENVELOPE" | jq --arg id "$agent_id" --arg b64 "$sa_b64" '.subagents[$id] = $b64')
     done
 fi
+
+echo "$ENVELOPE" > "$BUNDLE_FILE"
 
 # Attach as git note
 git notes --ref=claude-sessions add -f -F "$BUNDLE_FILE" "$HEAD_SHA" 2>/dev/null || true
 rm -f "$BUNDLE_FILE"
 
-# Push the note ref so CI can fetch it
+# Push the note ref — merge remote notes first to avoid non-fast-forward rejection
+git fetch origin refs/notes/claude-sessions:refs/notes/claude-sessions-remote 2>/dev/null \
+  && git notes --ref=claude-sessions merge refs/notes/claude-sessions-remote 2>/dev/null || true
 git push origin refs/notes/claude-sessions 2>/dev/null || true
 
 exit 0

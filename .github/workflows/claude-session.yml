@@ -25,8 +25,18 @@ jobs:
           mkdir -p sessions
           FOUND=false
           for SHA in $(git log --format='%H' origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}); do
-            NOTE_FILE="sessions/${SHA}.jsonl"
-            git notes --ref=claude-sessions show "$SHA" > "$NOTE_FILE" 2>/dev/null || { rm -f "$NOTE_FILE"; continue; }
+            RAW_NOTE="/tmp/note-${SHA}.json"
+            git notes --ref=claude-sessions show "$SHA" > "$RAW_NOTE" 2>/dev/null || { rm -f "$RAW_NOTE"; continue; }
+
+            # Decode base64 JSON envelope → raw JSONL with ---SUBAGENT: delimiters
+            OUT="sessions/${SHA}.jsonl"
+            jq -r '.main' "$RAW_NOTE" | base64 -d > "$OUT"
+            for AGENT_ID in $(jq -r '.subagents // {} | keys[]' "$RAW_NOTE"); do
+              printf '\n---SUBAGENT:%s---\n' "$AGENT_ID" >> "$OUT"
+              jq -r --arg id "$AGENT_ID" '.subagents[$id]' "$RAW_NOTE" | base64 -d >> "$OUT"
+            done
+            rm -f "$RAW_NOTE"
+
             FOUND=true
           done
           echo "found=$FOUND" >> "$GITHUB_OUTPUT"
